@@ -39,6 +39,97 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 
 
+def _get_groq_key() -> str | None:
+    import os
+    env_path = BASE_DIR / ".env"
+    if env_path.is_file():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if "=" in line and not line.strip().startswith("#"):
+                        k, v = line.split("=", 1)
+                        if k.strip() == "GROQ_API_KEY":
+                            return v.strip().strip('"').strip("'")
+        except Exception:
+            pass
+    return os.environ.get("GROQ_API_KEY")
+
+
+def record_audio_termux(filepath: str) -> bool:
+    """
+    Record audio using termux-microphone-record.
+    Stops when the user presses Enter.
+    """
+    import os
+    # Ensure any previous recording is stopped
+    subprocess.run(["termux-microphone-record", "-q"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
+
+    print("[*] Recording started. Speak now...")
+    print("[*] Press ENTER to stop recording.")
+    
+    try:
+        # Start recording to filepath
+        proc = subprocess.Popen(
+            ["termux-microphone-record", "-f", filepath],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        # Wait for user input to stop
+        sys.stdin.readline()
+        
+        # Stop recording
+        subprocess.run(["termux-microphone-record", "-q"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        # Wait a moment for file write to complete
+        time.sleep(0.5)
+        return os.path.exists(filepath) and os.path.getsize(filepath) > 0
+    except Exception as e:
+        print(f"[!] Error recording: {e}")
+        subprocess.run(["termux-microphone-record", "-q"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return False
+
+
+def transcribe_audio_groq(filepath: str, api_key: str) -> str:
+    """Send audio file to Groq Whisper API and return transcription text."""
+    import requests
+    import os
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}"
+    }
+    try:
+        with open(filepath, "rb") as f:
+            files = {
+                "file": (os.path.basename(filepath), f, "audio/wav")
+            }
+            data = {
+                "model": "whisper-large-v3-turbo",
+                "response_format": "json"
+            }
+            res = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=30
+            )
+        if res.status_code == 200:
+            return res.json().get("text", "").strip()
+        else:
+            print(f"[!] Groq Whisper error: {res.text}")
+            return ""
+    except Exception as e:
+        print(f"[!] Groq Whisper exception: {e}")
+        return ""
+
+
 # ── Config ────────────────────────────────────────────────────────────────
 WAKE_WORDS = ["jarvis", "hey jarvis", "ok jarvis", "hi jarvis"]
 
@@ -278,21 +369,36 @@ def main():
         print()
 
         tts = build_tts()
+        groq_key = _get_groq_key()
+        temp_wav = str(BASE_DIR / "temp_record.wav")
+
         while True:
             try:
                 user_input = input("You: ").strip()
                 if not user_input:
-                    print("[*] Listening (Google STT)...")
-                    try:
-                        res = subprocess.run(["termux-speech-to-text"], capture_output=True, text=True, timeout=15)
-                        command = res.stdout.strip()
+                    success = False
+                    if groq_key:
+                        success = record_audio_termux(temp_wav)
+
+                    if success:
+                        print("[*] Transcribing audio with Groq Whisper model...")
+                        command = transcribe_audio_groq(temp_wav, groq_key)
                         if not command:
-                            print("[!] No speech recognized.")
+                            print("[!] Whisper transcription was empty.")
                             continue
-                        print(f"[>] Command (Voice): {command}")
-                    except Exception as e:
-                        print(f"[!] Termux Speech-to-Text failed. Ensure Termux:API app & package are installed.")
-                        continue
+                        print(f"[>] Command (Whisper): {command}")
+                    else:
+                        print("[*] Falling back to Termux Speech Recognition popup...")
+                        try:
+                            res = subprocess.run(["termux-speech-to-text"], capture_output=True, text=True, timeout=15)
+                            command = res.stdout.strip()
+                            if not command:
+                                print("[!] No speech recognized.")
+                                continue
+                            print(f"[>] Command (Voice): {command}")
+                        except Exception as e:
+                            print(f"[!] Termux Speech-to-Text failed. Ensure Termux:API app & package are installed.")
+                            continue
                 else:
                     if user_input.lower() == "exit":
                         print("Goodbye!")
