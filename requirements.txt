@@ -1,0 +1,17 @@
+ollama>=0.2.1
+fastapi
+uvicorn
+openai                 # for Groq API support
+
+# --- Voice Listener dependencies ---
+SpeechRecognition      # system voice listener input
+pyaudio                # microphone audio capture
+pyttsx3                # text-to-speech output
+requests               # checking server status / sending chat requests
+
+# --- System control dependencies (optional, tools degrade gracefully if missing) ---
+pyautogui              # keyboard/mouse automation (browser tabs, window snap, video controls)
+Pillow                 # screenshot capture
+pyperclip              # clipboard read/write
+pycaw                  # Windows volume controls
+comtypes               # required by pycaw

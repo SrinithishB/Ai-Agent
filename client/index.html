@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>J.A.R.V.I.S — Local AI Agent</title>
+  <meta name="description" content="Just A Rather Very Intelligent System — your locally running AI agent." />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <!-- ── Sci-Fi HUD Background Animation ──────────────────── -->
+  <div class="hud-background">
+    <!-- Dark Radial Mesh Backdrop -->
+    <div class="hud-radar"></div>
+    
+    <!-- Rotating Concentric HUD Circles -->
+    <div class="hud-circle ring-outer"></div>
+    
+    <!-- Middle Ring with Rotating Perimeter Labels -->
+    <div class="hud-circle ring-middle">
+      <div class="tech-label label-1">DOCS</div>
+      <div class="tech-label label-2">CTRL</div>
+      <div class="tech-label label-3">DESK</div>
+      <div class="tech-label label-4">XPLR</div>
+      <div class="tech-label label-5">GATE</div>
+      <div class="tech-label label-6">CFG</div>
+      <div class="tech-label label-7">USR</div>
+      <div class="tech-label label-8">CHRE</div>
+    </div>
+    
+    <div class="hud-circle ring-inner"></div>
+    <div class="hud-circle ring-accent"></div>
+    <div class="hud-circle ring-core"></div>
+    
+    <!-- Core Reactor Status Info -->
+    <div class="hud-core-status">
+      <span class="status-num" style="font-size: 20px; letter-spacing: 2px;">JARVIS</span>
+      <span class="status-lbl">CORE</span>
+    </div>
+
+    <!-- HUD Corner Bar Graph -->
+    <div class="hud-tech-bars">
+      <span></span><span></span><span></span><span></span><span></span>
+    </div>
+
+    <!-- Top Telemetry Status Bar -->
+    <div class="hud-top-bar">
+      <span>CHROME // WEB</span>
+      <span>SPEAKERS: 80%</span>
+      <span>LAN: 192.168.1.103</span>
+      <span>CPU: 12%</span>
+      <span>RAM: 48%</span>
+      <span>HDD: 328G</span>
+      <span>PWR: 98%</span>
+    </div>
+
+    <!-- Left Suit Telemetry Column (File stats / shortcuts) -->
+    <div class="hud-telemetry telemetry-left">
+      <div class="tel-header">D:\PROJECT\AGENT</div>
+      <div>SYS_DIAG: <span style="color: var(--accent);">ONLINE</span></div>
+      <div>STRENGTH: <span style="color: var(--accent);">99%</span></div>
+      <div style="margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; font-weight: bold; color: var(--accent);">LINKS:</div>
+      <div>UNLIMITED <span class="tel-right">579.2 KB</span></div>
+      <div>FILELIST <span class="tel-right">558.2 GB</span></div>
+      <div>LASTTORRENT <span class="tel-right">18.4 MB</span></div>
+      <div>MININOVA <span class="tel-right">12.1 KB</span></div>
+      <div>DEVIANT <span class="tel-right">8.2 MB</span></div>
+    </div>
+
+    <!-- Right Suit Telemetry Column (Weather / location) -->
+    <div class="hud-telemetry telemetry-right">
+      <div class="tel-header">RIDGEFIELD, CT</div>
+      <div>TEMP: <span style="color: var(--accent);">56°F</span></div>
+      <div>CONDITION: <span style="color: var(--accent);">PARTLY CLOUDY</span></div>
+      <div>HUMIDITY: <span>94%</span></div>
+      <div>WIND: <span>1 mph (NW)</span></div>
+      <div style="margin-top: 10px; border-top: 1px solid var(--border); padding-top: 6px; font-weight: bold; color: var(--accent);">WEATHER:</div>
+      <div>TODAY <span class="tel-right">74°</span></div>
+      <div>TOMORROW <span class="tel-right">80° / 57°</span></div>
+      <div>SATURDAY <span class="tel-right">78° / 59°</span></div>
+    </div>
+  </div>
+
+  <!-- ── Header ──────────────────────────────────────────── -->
+  <header>
+    <div class="avatar-ring" id="jarvis-avatar" data-state="idle">
+      <div class="ring"></div>
+      <div class="ring"></div>
+      <div class="ring"></div>
+      <div class="core">J</div>
+    </div>
+
+    <div class="header-title">
+      <h1>J.A.R.V.I.S</h1>
+      <p>JUST A RATHER VERY INTELLIGENT SYSTEM</p>
+    </div>
+
+    <div id="status-pill" data-state="idle">
+      <span class="dot"></span>
+      <span id="status-text">Connecting...</span>
+    </div>
+
+    <!-- Stop Thinking -->
+    <button id="stop-btn" class="icon-btn stop-btn" style="display: none;" title="Stop thinking/inference">⏹ Stop</button>
+
+    <!-- Model Selection -->
+    <div class="model-select-wrapper" title="Switch Ollama Model">
+      <select id="model-select" class="model-select">
+        <option value="" disabled selected>Loading models...</option>
+      </select>
+    </div>
+
+    <!-- Wake word toggle -->
+    <button class="icon-btn" id="wake-toggle" title='Enable always-on wake word — say "Jarvis" to activate'>👂</button>
+
+    <!-- Voice output toggle -->
+    <button class="icon-btn active" id="tts-toggle" title="Toggle voice output">🔊</button>
+  </header>
+
+  <!-- Wake word active indicator bar (hidden by default) -->
+  <div id="wake-indicator">
+    <span class="wake-dot"></span>
+    <span class="wake-label">Listening for "Jarvis"...</span>
+  </div>
+
+  <!-- ── Main layout ──────────────────────────────────────── -->
+  <div class="main-layout">
+
+    <!-- Chat panel -->
+    <div id="chat-panel">
+      <div id="chat-area">
+      </div>
+    </div>
+
+    <!-- Sidebar Resizer Handle -->
+    <div id="sidebar-resizer" class="sidebar-resizer"></div>
+
+    <!-- Activity log sidebar -->
+    <aside id="log-sidebar">
+      <!-- Section 1: Activity Log -->
+      <div class="sidebar-section active" id="sec-activity">
+        <div class="section-header">
+          <span>⚡ Activity Log</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="section-content" id="log-panel">
+          <p class="log-hint">Tool activity will appear here...</p>
+        </div>
+      </div>
+
+      <!-- Section 2: Thoughts & Reasoning -->
+      <div class="sidebar-section active" id="sec-thoughts">
+        <div class="section-header">
+          <span>🧠 Thoughts & Reasoning</span>
+          <span class="chevron">▼</span>
+        </div>
+        <div class="section-content" id="thoughts-panel">
+          <p class="log-hint">Model reasoning will stream here...</p>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ── Input area ───────────────────────────────────────── -->
+  <div id="input-area">
+    <button id="mic-btn" title="Click to speak">🎤</button>
+    <input
+      id="message-input"
+      type="text"
+      placeholder="Ask JARVIS anything..."
+      autocomplete="off"
+      spellcheck="false"
+    />
+    <button id="send-btn" title="Send (Enter)">➤</button>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
