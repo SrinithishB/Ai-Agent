@@ -20,7 +20,10 @@ import sys
 import time
 import argparse
 import subprocess
-import winsound
+try:
+    import winsound
+except ImportError:
+    winsound = None
 import webbrowser
 import requests
 import pyttsx3
@@ -70,19 +73,31 @@ def speak(engine, text: str):
 # ── Audio Chimes ─────────────────────────────────────────────────────────
 def chime_activate():
     """Ascending two-tone — plays when wake word detected."""
-    winsound.Beep(523, 110)   # C5
-    winsound.Beep(659, 190)   # E5
+    if winsound:
+        winsound.Beep(523, 110)   # C5
+        winsound.Beep(659, 190)   # E5
+    else:
+        sys.stdout.write("\a")
+        sys.stdout.flush()
 
 
 def chime_deactivate():
     """Descending two-tone — plays on shutdown."""
-    winsound.Beep(659, 100)
-    winsound.Beep(523, 160)
+    if winsound:
+        winsound.Beep(659, 100)
+        winsound.Beep(523, 160)
+    else:
+        sys.stdout.write("\a")
+        sys.stdout.flush()
 
 
 def chime_error():
     """Single low beep — plays on error."""
-    winsound.Beep(300, 250)
+    if winsound:
+        winsound.Beep(300, 250)
+    else:
+        sys.stdout.write("\a")
+        sys.stdout.flush()
 
 
 # ── Speech Recognition ────────────────────────────────────────────────────
