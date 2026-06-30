@@ -26,8 +26,14 @@ except ImportError:
     winsound = None
 import webbrowser
 import requests
-import pyttsx3
-import speech_recognition as sr
+try:
+    import pyttsx3
+except ImportError:
+    pyttsx3 = None
+try:
+    import speech_recognition as sr
+except ImportError:
+    sr = None
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
@@ -38,21 +44,34 @@ WAKE_WORDS = ["jarvis", "hey jarvis", "ok jarvis", "hi jarvis"]
 
 
 # ── TTS Engine ────────────────────────────────────────────────────────────
+def _is_android() -> bool:
+    import os
+    return os.path.exists("/system/bin/app_process") or "ANDROID_ROOT" in os.environ
+
+
 def build_tts():
-    """Build and configure the pyttsx3 TTS engine."""
-    eng = pyttsx3.init()
-    eng.setProperty("rate", 165)
-    eng.setProperty("volume", 1.0)
+    """Build and configure the pyttsx3 TTS engine or return Termux fallback."""
+    if _is_android():
+        return "termux"
 
-    # Pick a natural-sounding voice (prefers David/Mark on Windows SAPI5)
-    voices = eng.getProperty("voices")
-    for v in voices:
-        name = v.name.lower()
-        if "david" in name or "mark" in name or "zira" in name:
-            eng.setProperty("voice", v.id)
-            break
+    if not pyttsx3:
+        return None
 
-    return eng
+    try:
+        eng = pyttsx3.init()
+        eng.setProperty("rate", 165)
+        eng.setProperty("volume", 1.0)
+
+        # Pick a natural-sounding voice (prefers David/Mark on Windows SAPI5)
+        voices = eng.getProperty("voices")
+        for v in voices:
+            name = v.name.lower()
+            if "david" in name or "mark" in name or "zira" in name:
+                eng.setProperty("voice", v.id)
+                break
+        return eng
+    except Exception:
+        return None
 
 
 def speak(engine, text: str):
@@ -65,9 +84,22 @@ def speak(engine, text: str):
             .replace("#", "")
     )
     clean = " ".join(clean.split())
-    if clean:
-        engine.say(clean)
-        engine.runAndWait()
+    if not clean:
+        return
+
+    if engine == "termux":
+        try:
+            subprocess.run(["termux-tts-speak", clean], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            print(f"[Speech Fallback]: {clean}")
+    elif engine:
+        try:
+            engine.say(clean)
+            engine.runAndWait()
+        except Exception:
+            print(f"[Speech Fallback]: {clean}")
+    else:
+        print(f"[Speech Fallback]: {clean}")
 
 
 # ── Audio Chimes ─────────────────────────────────────────────────────────
@@ -226,6 +258,55 @@ def main():
     print("   Press   : Ctrl+C to quit")
     print("=" * 54)
     print()
+
+    # ── Try to setup standard desktop audio. Fall back to Termux console if it fails ──
+    use_termux_mode = False
+    if _is_android() or sr is None or not pyttsx3:
+        use_termux_mode = True
+
+    if use_termux_mode:
+        print("=" * 54)
+        print("   J.A.R.V.I.S  —  Termux Console Assistant")
+        print(f"   Server  : {server_url}")
+        print("   Commands: Press Enter with no text to trigger Voice search,")
+        print("             or type your command directly. Type 'exit' to quit.")
+        print("=" * 54)
+        print()
+
+        tts = build_tts()
+        while True:
+            try:
+                user_input = input("You: ").strip()
+                if not user_input:
+                    print("[*] Listening (Google STT)...")
+                    try:
+                        res = subprocess.run(["termux-speech-to-text"], capture_output=True, text=True, timeout=15)
+                        command = res.stdout.strip()
+                        if not command:
+                            print("[!] No speech recognized.")
+                            continue
+                        print(f"[>] Command (Voice): {command}")
+                    except Exception as e:
+                        print(f"[!] Termux Speech-to-Text failed. Ensure Termux:API app & package are installed.")
+                        continue
+                else:
+                    if user_input.lower() == "exit":
+                        print("Goodbye!")
+                        break
+                    command = user_input
+
+                print("[*] Sending to JARVIS...")
+                reply = send_to_jarvis(command, chat_url)
+                preview = reply[:120] + ("..." if len(reply) > 120 else "")
+                print(f"[<] JARVIS  : {preview}")
+                speak(tts, reply)
+            except KeyboardInterrupt:
+                print("\n[*] Shutting down listener.")
+                break
+            except Exception as e:
+                print(f"[!] Error: {e}")
+                time.sleep(1)
+        return
 
     tts        = build_tts()
     recognizer = build_recognizer()
