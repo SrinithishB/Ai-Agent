@@ -133,7 +133,9 @@ def chime_error():
 
 
 # ── Speech Recognition ────────────────────────────────────────────────────
-def build_recognizer() -> sr.Recognizer:
+def build_recognizer():
+    if not sr:
+        return None
     rec = sr.Recognizer()
     rec.pause_threshold       = 1.1   # seconds of silence = end of phrase
     rec.energy_threshold      = 150   # default baseline
@@ -141,8 +143,10 @@ def build_recognizer() -> sr.Recognizer:
     return rec
 
 
-def transcribe(recognizer: sr.Recognizer, audio: sr.AudioData) -> str:
+def transcribe(recognizer, audio) -> str:
     """Convert audio to lowercase text; returns '' on failure."""
+    if not sr:
+        return ""
     try:
         return recognizer.recognize_google(audio).lower().strip()
     except sr.UnknownValueError:
