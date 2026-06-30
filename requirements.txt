@@ -1,7 +1,6 @@
 ollama>=0.2.1
 fastapi
 uvicorn
-openai                 # for Groq API support
 
 # --- Voice Listener dependencies ---
 SpeechRecognition      # system voice listener input

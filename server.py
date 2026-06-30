@@ -161,18 +161,16 @@ async def get_models():
     groq_key = os.environ.get("GROQ_API_KEY")
     if groq_key:
         try:
-            from openai import OpenAI
-            client = OpenAI(
-                base_url="https://api.groq.com/openai/v1",
-                api_key=groq_key
-            )
-            res = client.models.list()
-            # Filter out audio/non-text models
-            for m in res.data:
-                mid = m.id
-                if not any(w in mid.lower() for w in ("whisper", "prompt-guard", "safeguard")):
-                    groq_models.append(mid)
-            groq_models = sorted(groq_models)
+            import requests
+            headers = {"Authorization": f"Bearer {groq_key}"}
+            res = requests.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                for m in data.get("data", []):
+                    mid = m.get("id", "")
+                    if mid and not any(w in mid.lower() for w in ("whisper", "prompt-guard", "safeguard")):
+                        groq_models.append(mid)
+                groq_models = sorted(groq_models)
         except Exception:
             pass
 

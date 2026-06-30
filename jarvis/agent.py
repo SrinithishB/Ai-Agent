@@ -74,6 +74,96 @@ def _is_placeholder(val) -> bool:
     return False
 
 
+def _groq_chat_completion_stream(model: str, messages: list, tools: list, api_key: str):
+    import requests
+    import json
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.0,
+        "stream": True
+    }
+    if tools:
+        payload["tools"] = tools
+        
+    res = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        json=payload,
+        stream=True,
+        timeout=180
+    )
+    res.raise_for_status()
+    
+    class MockFunction:
+        def __init__(self, name="", arguments=""):
+            self.name = name
+            self.arguments = arguments
+
+    class MockToolCall:
+        def __init__(self, index, id="", type="function", function=None):
+            self.index = index
+            self.id = id
+            self.type = type
+            self.function = function or MockFunction()
+
+    class MockDelta:
+        def __init__(self, content="", tool_calls=None):
+            self.content = content
+            self.tool_calls = tool_calls or []
+            
+    class MockChoice:
+        def __init__(self, delta):
+            self.delta = delta
+            
+    class MockChunk:
+        def __init__(self, choices):
+            self.choices = choices or []
+
+    for line in res.iter_lines():
+        if not line:
+            continue
+        line_str = line.decode("utf-8").strip()
+        if line_str.startswith("data: "):
+            data_content = line_str[len("data: "):].strip()
+            if data_content == "[DONE]":
+                break
+            
+            try:
+                chunk_data = json.loads(data_content)
+            except Exception:
+                continue
+                
+            choices_data = chunk_data.get("choices", [])
+            choices = []
+            for c in choices_data:
+                delta_data = c.get("delta", {})
+                content = delta_data.get("content", "")
+                tool_calls_data = delta_data.get("tool_calls", [])
+                
+                tool_calls = []
+                for tc in tool_calls_data:
+                    func_data = tc.get("function", {})
+                    fn_name = func_data.get("name", "")
+                    fn_args = func_data.get("arguments", "")
+                    tool_calls.append(
+                        MockToolCall(
+                            index=tc.get("index", 0),
+                            id=tc.get("id", ""),
+                            type=tc.get("type", "function"),
+                            function=MockFunction(name=fn_name, arguments=fn_args)
+                        )
+                    )
+                choices.append(MockChoice(MockDelta(content=content, tool_calls=tool_calls)))
+            
+            yield MockChunk(choices=choices)
+
+
 def run(
     model_name: str,
     messages: list,
@@ -182,12 +272,6 @@ def run(
 
         try:
             if is_groq:
-                from openai import OpenAI
-                client = OpenAI(
-                    base_url="https://api.groq.com/openai/v1",
-                    api_key=groq_key
-                )
-                
                 # Use selected model name, or default if generic
                 groq_model_name = model_name
                 if not any(gp in model_name.lower() for gp in ("llama", "groq", "allam", "qwen3", "gpt-oss")):
@@ -252,12 +336,11 @@ def run(
                 while attempt_idx < len(model_attempts):
                     attempt_model = model_attempts[attempt_idx]
                     try:
-                        stream = client.chat.completions.create(
+                        stream = _groq_chat_completion_stream(
                             model=attempt_model,
                             messages=openai_messages,
                             tools=openai_tools,
-                            temperature=0.0,
-                            stream=True,
+                            api_key=groq_key
                         )
                         break
                     except Exception as exc:
@@ -300,11 +383,6 @@ def run(
                     if groq_key and ("failed_generation" in err_msg or "failed to call" in err_msg or "connection" in err_msg or "refused" in err_msg or "not found" in err_msg):
                         if verbose:
                             print(f"\n[JARVIS] Local Ollama failed ({exc}). Falling back to Groq Cloud model 'llama-3.3-70b-versatile'...")
-                        from openai import OpenAI
-                        client = OpenAI(
-                            base_url="https://api.groq.com/openai/v1",
-                            api_key=groq_key
-                        )
                         # Map system message + history to OpenAI format and sanitize IDs/types
                         openai_messages = []
                         for i, m in enumerate(messages):
@@ -354,12 +432,11 @@ def run(
                                         break
 
                         openai_tools = tool_registry.get_openai_tools()
-                        stream = client.chat.completions.create(
+                        stream = _groq_chat_completion_stream(
                             model="llama-3.3-70b-versatile",
                             messages=openai_messages,
                             tools=openai_tools,
-                            temperature=0.0,
-                            stream=True,
+                            api_key=groq_key
                         )
                         is_groq = True
                     else:
