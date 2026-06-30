@@ -128,10 +128,10 @@ def send_to_jarvis(message: str, chat_url: str) -> str:
 
 
 # ── Server auto-start ────────────────────────────────────────────────────
-def ensure_server_running(server_url: str, port: int):
+def ensure_server_running(server_url: str, host: str, port: int):
     """
     Check if the JARVIS server is reachable.
-    If not, start server.py automatically as a background process.
+    If not, and host is local, start server.py automatically as a background process.
     Returns the subprocess.Popen handle if we started it, else None.
     """
     try:
@@ -141,6 +141,11 @@ def ensure_server_running(server_url: str, port: int):
             return None
     except requests.RequestException:
         pass
+
+    if host not in ("localhost", "127.0.0.1"):
+        print(f"[!] JARVIS server at {server_url} is unreachable.")
+        print(f"[!] Since host is remote ({host}), please ensure server.py is running on your phone.")
+        return None
 
     print(f"[*] Server not found. Starting server.py on port {port}...")
     
@@ -177,6 +182,10 @@ def ensure_server_running(server_url: str, port: int):
 def main():
     parser = argparse.ArgumentParser(description="JARVIS System Voice Listener")
     parser.add_argument(
+        "--host", type=str, default="localhost",
+        help="Host/IP the JARVIS server is running on (default: localhost)"
+    )
+    parser.add_argument(
         "--port", type=int, default=8000,
         help="Port the JARVIS server is running on (default: 8000)"
     )
@@ -186,13 +195,13 @@ def main():
     )
     args = parser.parse_args()
 
-    server_url   = f"http://localhost:{args.port}"
+    server_url   = f"http://{args.host}:{args.port}"
     chat_url     = f"{server_url}/api/chat"
     open_browser = not args.no_browser
     browser_opened = False
 
     # ── Auto-start server if not already running ───────────────────────────
-    server_proc = ensure_server_running(server_url, args.port)
+    server_proc = ensure_server_running(server_url, args.host, args.port)
 
     print("=" * 54)
     print("   J.A.R.V.I.S  —  System Voice Listener")
