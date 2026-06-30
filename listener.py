@@ -96,38 +96,138 @@ def record_audio_termux(filepath: str) -> bool:
         return False
 
 
-def transcribe_audio_groq(filepath: str, api_key: str) -> str:
-    """Send audio file to Groq Whisper API and return transcription text."""
+def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> str:
+    """Send audio file to Groq Whisper API, trying models in model_list sequentially on failure/rate-limit."""
     import requests
     import os
     
     headers = {
         "Authorization": f"Bearer {api_key}"
     }
-    try:
-        with open(filepath, "rb") as f:
-            files = {
-                "file": (os.path.basename(filepath), f, "audio/wav")
-            }
-            data = {
-                "model": "whisper-large-v3-turbo",
-                "response_format": "json"
-            }
-            res = requests.post(
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                headers=headers,
-                files=files,
-                data=data,
-                timeout=30
+    
+    for attempt_idx, model in enumerate(model_list):
+        try:
+            with open(filepath, "rb") as f:
+                files = {
+                    "file": (os.path.basename(filepath), f, "audio/wav")
+                }
+                data = {
+                    "model": model,
+                    "response_format": "json"
+                }
+                res = requests.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=30
+                )
+            if res.status_code == 200:
+                # Success! Move the successful model to the front of the list so it is used first next time
+                if attempt_idx > 0:
+                    model_list.insert(0, model_list.pop(attempt_idx))
+                return res.json().get("text", "").strip()
+            
+            # If rate limit (429) or other API errors
+            print(f"[!] Groq Whisper ({model}) error {res.status_code}: {res.text}")
+            if res.status_code == 429:
+                print(f"[!] Rate limit hit on '{model}'. Trying fallback model...")
+                continue
+        except Exception as e:
+            print(f"[!] Groq Whisper ({model}) exception: {e}")
+            continue
+
+    return ""
+
+
+def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: str):
+    """Continuous background voice wake loop using Termux:API and Groq Whisper."""
+    import os
+    import sys
+    
+    wake_wav = str(BASE_DIR / "wake_temp.wav")
+    cmd_wav = str(BASE_DIR / "cmd_temp.wav")
+    
+    whisper_models = ["whisper-large-v3-turbo", "whisper-large-v3"]
+    
+    print("=" * 54)
+    print("   J.A.R.V.I.S  —  Termux Hands-Free Voice Mode")
+    print(f"   Server  : {server_url}")
+    print(f"   Wake    : say 'Jarvis' to activate")
+    print("   Models  :", ", ".join(whisper_models))
+    print("   Press   : Ctrl+C to quit")
+    print("=" * 54)
+    print()
+    
+    print("[*] Listening for 'Jarvis' (hands-free)...")
+    
+    while True:
+        try:
+            # Record a short 3-second audio clip
+            res = subprocess.run(
+                ["termux-microphone-record", "-f", wake_wav, "-l", "3"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10
             )
-        if res.status_code == 200:
-            return res.json().get("text", "").strip()
-        else:
-            print(f"[!] Groq Whisper error: {res.text}")
-            return ""
-    except Exception as e:
-        print(f"[!] Groq Whisper exception: {e}")
-        return ""
+            
+            if not os.path.exists(wake_wav) or os.path.getsize(wake_wav) == 0:
+                time.sleep(0.5)
+                continue
+                
+            # Transcribe the 3-second clip
+            text = transcribe_audio_groq(wake_wav, groq_key, whisper_models).lower().strip()
+            
+            if not text:
+                continue
+                
+            # Find if wake word was spoken
+            triggered = next((w for w in WAKE_WORDS if w in text), None)
+            if not triggered:
+                continue
+                
+            # Wake word triggered!
+            print(f"[!] Wake word detected in: '{text}'")
+            chime_activate()
+            speak(tts, "Yes?")
+            
+            print("[*] Listening for command (6 seconds)...")
+            res_cmd = subprocess.run(
+                ["termux-microphone-record", "-f", cmd_wav, "-l", "6"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=12
+            )
+            
+            if not os.path.exists(cmd_wav) or os.path.getsize(cmd_wav) == 0:
+                speak(tts, "I didn't hear anything.")
+                print("[!] No audio captured for command.")
+                continue
+                
+            print("[*] Transcribing command...")
+            command = transcribe_audio_groq(cmd_wav, groq_key, whisper_models)
+            if not command:
+                speak(tts, "Sorry, I couldn't transcribe that.")
+                print("[!] Command transcription failed.")
+                continue
+                
+            print(f"[>] Command : {command}")
+            
+            print("[*] Sending to JARVIS...")
+            reply = send_to_jarvis(command, chat_url)
+            preview = reply[:120] + ("..." if len(reply) > 120 else "")
+            print(f"[<] JARVIS  : {preview}")
+            speak(tts, reply)
+            
+            print("\n[*] Listening for 'Jarvis' (hands-free)...")
+            
+        except KeyboardInterrupt:
+            print("\n[*] Shutting down hands-free listener.")
+            chime_deactivate()
+            break
+        except Exception as e:
+            print(f"[!] Error: {e}")
+            time.sleep(1)
 
 
 # ── Config ────────────────────────────────────────────────────────────────
@@ -335,6 +435,10 @@ def main():
         "--no-browser", action="store_true",
         help="Do not open the web browser when JARVIS is first activated"
     )
+    parser.add_argument(
+        "--hands-free", action="store_true",
+        help="Enable continuous hands-free voice wake-word listening on Termux (requires Groq API key)"
+    )
     args = parser.parse_args()
 
     server_url   = f"http://{args.host}:{args.port}"
@@ -360,16 +464,23 @@ def main():
         use_termux_mode = True
 
     if use_termux_mode:
+        groq_key = _get_groq_key()
+        tts = build_tts()
+
+        if args.hands_free and groq_key:
+            termux_handsfree_wake_loop(server_url, chat_url, tts, groq_key)
+            return
+
         print("=" * 54)
         print("   J.A.R.V.I.S  —  Termux Console Assistant")
         print(f"   Server  : {server_url}")
         print("   Commands: Press Enter with no text to trigger Voice search,")
         print("             or type your command directly. Type 'exit' to quit.")
+        if groq_key:
+            print("             Tip: run with --hands-free for hands-free wake word listening!")
         print("=" * 54)
         print()
 
-        tts = build_tts()
-        groq_key = _get_groq_key()
         temp_wav = str(BASE_DIR / "temp_record.wav")
 
         while True:
