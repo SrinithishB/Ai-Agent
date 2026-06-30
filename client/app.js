@@ -8,7 +8,7 @@
  *  - WAKE WORD    : Always-on "Jarvis" detection — hands-free activation
  */
 
-// ── DOM refs ──────────────────────────────────────────────────────────────
+const inputArea       = document.getElementById('input-area');
 const chatArea        = document.getElementById('chat-area');
 const logPanel        = document.getElementById('log-panel');
 const inputEl         = document.getElementById('message-input');
@@ -547,10 +547,9 @@ micBtn.addEventListener('click', () => {
   else startManualListening(false);
 });
 
-sendBtn.addEventListener('click', () => sendMessage());
-
-inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+inputArea.addEventListener('submit', (e) => {
+  e.preventDefault();
+  sendMessage();
 });
 
 ttsToggle.addEventListener('click', () => {

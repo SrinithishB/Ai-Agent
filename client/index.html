@@ -164,8 +164,8 @@
   </div>
 
   <!-- ── Input area ───────────────────────────────────────── -->
-  <div id="input-area">
-    <button id="mic-btn" title="Click to speak">🎤</button>
+  <form id="input-area" action="">
+    <button id="mic-btn" type="button" title="Click to speak">🎤</button>
     <input
       id="message-input"
       type="text"
@@ -173,8 +173,8 @@
       autocomplete="off"
       spellcheck="false"
     />
-    <button id="send-btn" title="Send (Enter)">➤</button>
-  </div>
+    <button id="send-btn" type="submit" title="Send (Enter)">➤</button>
+  </form>
 
   <script src="/static/app.js"></script>
 </body>
