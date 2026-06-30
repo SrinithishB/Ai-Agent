@@ -57,7 +57,7 @@ def _get_groq_key() -> str | None:
 
 def record_audio_termux(filepath: str) -> bool:
     """
-    Record audio using termux-microphone-record.
+    Record audio using termux-microphone-record with AAC encoding.
     Stops when the user presses Enter.
     """
     import os
@@ -74,9 +74,9 @@ def record_audio_termux(filepath: str) -> bool:
     print("[*] Press ENTER to stop recording.")
     
     try:
-        # Start recording to filepath
+        # Start recording to filepath with AAC encoder
         proc = subprocess.Popen(
-            ["termux-microphone-record", "-f", filepath],
+            ["termux-microphone-record", "-e", "aac", "-f", filepath],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -109,7 +109,7 @@ def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> str:
         try:
             with open(filepath, "rb") as f:
                 files = {
-                    "file": (os.path.basename(filepath), f, "audio/wav")
+                    "file": (os.path.basename(filepath), f, "audio/m4a")
                 }
                 data = {
                     "model": model,
@@ -145,8 +145,8 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
     import os
     import sys
     
-    wake_wav = str(BASE_DIR / "wake_temp.wav")
-    cmd_wav = str(BASE_DIR / "cmd_temp.wav")
+    wake_wav = str(BASE_DIR / "wake_temp.m4a")
+    cmd_wav = str(BASE_DIR / "cmd_temp.m4a")
     
     whisper_models = ["whisper-large-v3-turbo", "whisper-large-v3"]
     
@@ -165,7 +165,7 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
         try:
             # Record a short 3-second audio clip
             res = subprocess.run(
-                ["termux-microphone-record", "-f", wake_wav, "-l", "3"],
+                ["termux-microphone-record", "-e", "aac", "-f", wake_wav, "-l", "3"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10
@@ -193,7 +193,7 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
             
             print("[*] Listening for command (6 seconds)...")
             res_cmd = subprocess.run(
-                ["termux-microphone-record", "-f", cmd_wav, "-l", "6"],
+                ["termux-microphone-record", "-e", "aac", "-f", cmd_wav, "-l", "6"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=12
@@ -481,7 +481,7 @@ def main():
         print("=" * 54)
         print()
 
-        temp_wav = str(BASE_DIR / "temp_record.wav")
+        temp_wav = str(BASE_DIR / "temp_record.m4a")
 
         while True:
             try:
@@ -493,7 +493,7 @@ def main():
 
                     if success:
                         print("[*] Transcribing audio with Groq Whisper model...")
-                        command = transcribe_audio_groq(temp_wav, groq_key)
+                        command = transcribe_audio_groq(temp_wav, groq_key, ["whisper-large-v3-turbo", "whisper-large-v3"])
                         if not command:
                             print("[!] Whisper transcription was empty.")
                             continue
