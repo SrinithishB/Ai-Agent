@@ -164,19 +164,15 @@ def _launch_shell_target(target: str) -> bool:
 # Tool implementations
 # ---------------------------------------------------------------------------
 
+def _is_android() -> bool:
+    return os.path.exists("/system/bin/app_process") or "ANDROID_ROOT" in os.environ
+
+
 def launch_app(app_name: str) -> str:
     """
-    Launches an application by name on Windows. Understands common aliases
-    like 'VS Code', 'Chrome', 'Spotify', 'Terminal', 'Settings', 'Calculator'.
-    If the app is not in the known registry, it tries to find it in PATH
-    and common installation directories.
-
-    Use this for commands like:
-      - "Open Spotify"
-      - "Launch VS Code"
-      - "Start Chrome"
-      - "Fire up Discord"
-      - "Bring up Calculator"
+    Launches an application by name. On Windows, understands common aliases
+    like 'VS Code', 'Chrome', 'Spotify', etc. On Android/Termux, launches
+    applications using package names or default intent categories.
 
     Args:
         app_name (str): Natural name of the application to launch.
@@ -185,11 +181,69 @@ def launch_app(app_name: str) -> str:
         str: Success or error message.
     """
     key = app_name.strip().lower()
-    entry = _APP_MAP.get(key)
 
-    # --- Known entry ---
+    if _is_android():
+        android_packages = {
+            "chrome": "com.android.chrome",
+            "google chrome": "com.android.chrome",
+            "spotify": "com.spotify.music",
+            "youtube": "com.google.android.youtube",
+            "whatsapp": "com.whatsapp",
+            "telegram": "org.telegram.messenger",
+            "discord": "com.discord",
+            "facebook": "com.facebook.katana",
+            "instagram": "com.instagram.android",
+            "twitter": "com.twitter.android",
+            "x": "com.twitter.android",
+        }
+        android_categories = {
+            "calculator": "APP_CALCULATOR",
+            "browser": "APP_BROWSER",
+            "calendar": "APP_CALENDAR",
+            "maps": "APP_MAPS",
+            "music": "APP_MUSIC",
+            "gallery": "APP_GALLERY",
+            "photos": "APP_GALLERY",
+            "contacts": "APP_CONTACTS",
+            "email": "APP_EMAIL",
+        }
+
+        if key == "settings":
+            try:
+                subprocess.run(["am", "start", "-a", "android.settings.SETTINGS"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return "Opened Settings."
+            except Exception as e:
+                return f"Failed to open Settings: {e}"
+
+        if key in android_packages:
+            package = android_packages[key]
+            try:
+                subprocess.run(["monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return f"Launched {app_name} (package: {package})."
+            except Exception as e:
+                return f"Failed to launch package {package}: {e}"
+
+        if key in android_categories:
+            cat = android_categories[key]
+            try:
+                subprocess.run(["am", "start", "-a", "android.intent.action.MAIN", "-c", f"android.intent.category.{cat}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return f"Launched Android default {app_name}."
+            except Exception as e:
+                return f"Failed to launch category {cat}: {e}"
+
+        # Try guessing it as package name directly
+        try:
+            res = subprocess.run(["monkey", "-p", key, "-c", "android.intent.category.LAUNCHER", "1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if res.returncode == 0:
+                return f"Launched {app_name}."
+        except Exception:
+            pass
+
+        return f"Could not find or launch '{app_name}' on Android."
+
+    # --- Windows Implementation ---
+    entry = _APP_MAP.get(key)
     if entry:
-        # Open a system folder in Explorer
         if "explorer" in entry:
             folder = os.path.expandvars(entry["explorer"])
             try:
@@ -199,13 +253,11 @@ def launch_app(app_name: str) -> str:
             except Exception as e:
                 return f"Error opening folder: {e}"
 
-        # Shell URI / msc target
         if "shell" in entry:
             if _launch_shell_target(entry["shell"]):
                 return f"Launched {app_name}."
             return f"Could not launch {app_name} via shell."
 
-        # Regular executable
         exe = entry.get("exe", "")
         args = entry.get("args", [])
         found_path = _find_exe(exe)
@@ -216,7 +268,6 @@ def launch_app(app_name: str) -> str:
                 return f"Launched {app_name}."
             except Exception as e:
                 return f"Found {app_name} but failed to launch: {e}"
-        # Fallback: try Windows 'start' command
         try:
             subprocess.Popen(["cmd", "/c", "start", "", exe] + args,
                              creationflags=subprocess.CREATE_NO_WINDOW)
@@ -224,8 +275,6 @@ def launch_app(app_name: str) -> str:
         except Exception as e:
             return f"Could not find or launch {app_name}. It may not be installed. Error: {e}"
 
-    # --- Unknown app: fuzzy search ---
-    # Try the name directly as an exe in PATH
     guessed_exe = key.replace(" ", "") + ".exe"
     found_path = _find_exe(guessed_exe) or _find_exe(app_name.replace(" ", "") + ".exe")
     if found_path:
@@ -235,7 +284,6 @@ def launch_app(app_name: str) -> str:
         except Exception as e:
             return f"Error launching {app_name}: {e}"
 
-    # Last resort: Windows 'start' which searches the registry
     try:
         subprocess.Popen(["cmd", "/c", "start", "", app_name],
                          creationflags=subprocess.CREATE_NO_WINDOW)
@@ -250,12 +298,6 @@ def launch_app(app_name: str) -> str:
 def close_app(app_name: str) -> str:
     """
     Closes / terminates a running application by name.
-    Sends a graceful terminate signal first, then force-kills if needed.
-
-    Use this for commands like:
-      - "Close Notepad"
-      - "Quit Chrome"
-      - "Kill Spotify"
 
     Args:
         app_name (str): Name of the application to close.
@@ -264,15 +306,35 @@ def close_app(app_name: str) -> str:
         str: Success or error message.
     """
     key = app_name.strip().lower()
+
+    if _is_android():
+        android_packages = {
+            "chrome": "com.android.chrome",
+            "google chrome": "com.android.chrome",
+            "spotify": "com.spotify.music",
+            "youtube": "com.google.android.youtube",
+            "whatsapp": "com.whatsapp",
+            "telegram": "org.telegram.messenger",
+            "discord": "com.discord",
+            "facebook": "com.facebook.katana",
+            "instagram": "com.instagram.android",
+            "twitter": "com.twitter.android",
+            "x": "com.twitter.android",
+        }
+        package = android_packages.get(key, key)
+        try:
+            subprocess.run(["am", "force-stop", package], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return f"Requested force-stop for Android package: {package}."
+        except Exception as e:
+            return f"Error closing app on Android: {e}"
+
+    # --- Windows Implementation ---
     entry = _APP_MAP.get(key, {})
     proc_name = entry.get("proc", "")
-
-    # If not in registry, guess the process name
     if not proc_name:
         proc_name = key.replace(" ", "") + ".exe"
 
     try:
-        # /F = force, /IM = image name
         result = subprocess.run(
             ["taskkill", "/F", "/IM", proc_name],
             capture_output=True, text=True,
@@ -280,7 +342,6 @@ def close_app(app_name: str) -> str:
         )
         if result.returncode == 0:
             return f"Closed {app_name}."
-        # Try with the guessed name
         alt_proc = app_name.replace(" ", "") + ".exe"
         result2 = subprocess.run(
             ["taskkill", "/F", "/IM", alt_proc],
@@ -297,7 +358,6 @@ def close_app(app_name: str) -> str:
 def focus_app(app_name: str) -> str:
     """
     Brings a running application window to the foreground / gives it focus.
-    Use this for "Switch to Chrome", "Bring up Spotify", etc.
 
     Args:
         app_name (str): Name of the application window to focus.
@@ -305,14 +365,16 @@ def focus_app(app_name: str) -> str:
     Returns:
         str: Success or error message.
     """
+    if _is_android():
+        return launch_app(app_name)
+
+    # --- Windows Implementation ---
     try:
         import ctypes
         import ctypes.wintypes
 
         user32 = ctypes.windll.user32
         name_lower = app_name.strip().lower()
-
-        # EnumWindows callback to find the right window
         found_hwnd = [0]
 
         def enum_callback(hwnd, _):
@@ -326,7 +388,7 @@ def focus_app(app_name: str) -> str:
             title = buf.value.lower()
             if name_lower in title or title in name_lower:
                 found_hwnd[0] = hwnd
-                return False  # stop enumeration
+                return False
             return True
 
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
@@ -334,8 +396,7 @@ def focus_app(app_name: str) -> str:
 
         if found_hwnd[0]:
             hwnd = found_hwnd[0]
-            # Restore if minimized
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.ShowWindow(hwnd, 9)
             user32.SetForegroundWindow(hwnd)
             return f"Switched to {app_name}."
         else:
@@ -354,6 +415,10 @@ def minimize_app(app_name: str) -> str:
     Returns:
         str: Success or error message.
     """
+    if _is_android():
+        return "Minimizing app windows is not supported on Android mobile devices."
+
+    # --- Windows Implementation ---
     try:
         import ctypes
         import ctypes.wintypes
@@ -379,7 +444,7 @@ def minimize_app(app_name: str) -> str:
         user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
 
         if found_hwnd[0]:
-            user32.ShowWindow(found_hwnd[0], 6)  # SW_MINIMIZE
+            user32.ShowWindow(found_hwnd[0], 6)
             return f"Minimized {app_name}."
         return f"No window found for '{app_name}'."
     except Exception as e:
@@ -396,6 +461,10 @@ def maximize_app(app_name: str) -> str:
     Returns:
         str: Success or error message.
     """
+    if _is_android():
+        return "Maximizing app windows is not supported on Android mobile devices."
+
+    # --- Windows Implementation ---
     try:
         import ctypes
         import ctypes.wintypes
@@ -421,7 +490,7 @@ def maximize_app(app_name: str) -> str:
         user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
 
         if found_hwnd[0]:
-            user32.ShowWindow(found_hwnd[0], 3)  # SW_MAXIMIZE
+            user32.ShowWindow(found_hwnd[0], 3)
             return f"Maximized {app_name}."
         return f"No window found for '{app_name}'."
     except Exception as e:

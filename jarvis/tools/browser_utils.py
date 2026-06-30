@@ -91,6 +91,10 @@ def set_preferred_browser(name: str) -> str:
     return f"Preferred browser set to '{PREFERRED_BROWSER}'."
 
 
+def _is_android() -> bool:
+    return os.path.exists("/system/bin/app_process") or "ANDROID_ROOT" in os.environ
+
+
 def open_url(url: str) -> str:
     """
     Opens a URL in the preferred browser (default: Brave).
@@ -102,6 +106,13 @@ def open_url(url: str) -> str:
     Returns:
         str: Name of the browser that was used, or 'system default'.
     """
+    if _is_android():
+        try:
+            subprocess.run(["termux-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return "Android browser"
+        except Exception:
+            pass
+
     browser_name = PREFERRED_BROWSER.lower()
 
     if browser_name == "system":

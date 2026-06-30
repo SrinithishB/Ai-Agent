@@ -22,16 +22,15 @@ from pathlib import Path
 # Volume control
 # ---------------------------------------------------------------------------
 
+def _is_android() -> bool:
+    return os.path.exists("/system/bin/app_process") or "ANDROID_ROOT" in os.environ
+
+
 def set_volume(level: int) -> str:
     """
     Sets the system master volume to a specific percentage (0–100).
-    Uses the Windows Core Audio API (pycaw) if available, otherwise
-    falls back to nircmd or PowerShell.
-
-    Use for commands like:
-      - "Set volume to 50"
-      - "Set volume to 80%"
-      - "Volume 30"
+    On Windows, uses the Windows Core Audio API (pycaw).
+    On Android, uses termux-volume.
 
     Args:
         level (int): Target volume level, 0 (mute) to 100 (max).
@@ -44,7 +43,28 @@ def set_volume(level: int) -> str:
     except (ValueError, TypeError):
         return f"Invalid volume level '{level}'. Use a number from 0 to 100."
 
-    # Method 1: pycaw (most reliable)
+    if _is_android():
+        try:
+            import json
+            # Get max volume step for music stream (typically 15)
+            vol_info = subprocess.run(["termux-volume"], capture_output=True, text=True, timeout=3)
+            streams = json.loads(vol_info.stdout)
+            max_vol = 15
+            for s in streams:
+                if s.get("stream") == "music":
+                    max_vol = s.get("max_volume", 15)
+                    break
+        except Exception:
+            max_vol = 15
+        
+        target = int(level * max_vol / 100)
+        try:
+            subprocess.run(["termux-volume", "music", str(target)], timeout=3)
+            return f"Phone music volume set to {level}% (level {target}/{max_vol})."
+        except FileNotFoundError:
+            return "Could not set volume. Make sure 'termux-api' package is installed in Termux."
+
+    # Windows Implementation
     try:
         from ctypes import cast, POINTER
         from comtypes import CLSCTX_ALL
@@ -59,20 +79,11 @@ def set_volume(level: int) -> str:
         volume_ctrl.SetMasterVolumeLevelScalar(scalar, None)
         return f"Volume set to {level}%."
     except ImportError:
-        pass  # pycaw not installed, try next method
+        pass
     except Exception:
         pass
 
-    # Method 2: PowerShell (always available on Windows 10+)
     try:
-        ps_script = (
-            f"$obj = New-Object -ComObject WScript.Shell; "
-            f"Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; "
-            f"public class Vol {{ [DllImport(\"winmm.dll\")] public static extern int waveOutSetVolume(IntPtr h, uint dwVolume); }}'; "
-            f"[Vol]::waveOutSetVolume([IntPtr]::Zero, 0x{(level * 655):04x}{(level * 655):04x});"
-        )
-        # Simpler PowerShell approach using SoundVolumeView/nircmd conceptually via WScript
-        # Actually use the cleanest available approach:
         ps_code = f"""
 Add-Type -TypeDefinition @'
 using System;
@@ -96,7 +107,6 @@ $combined = ($vol -shl 16) -bor $vol
     except Exception:
         pass
 
-    # Method 3: nircmd (if installed)
     try:
         nircmd_val = int(level * 65535 / 100)
         result = subprocess.run(
@@ -111,29 +121,63 @@ $combined = ($vol -shl 16) -bor $vol
     except Exception:
         pass
 
-    return (
-        f"Could not set volume to {level}%. "
-        "Install pycaw for reliable volume control: pip install pycaw comtypes"
-    )
+    return f"Could not set volume to {level}%."
 
 
 def adjust_volume(direction: str) -> str:
     """
-    Increases, decreases, mutes, or unmutes the system volume using media keys
-    or pycaw if installed.
+    Increases, decreases, mutes, or unmutes the system volume.
+    On Windows, uses media keys or pycaw.
+    On Android, uses termux-volume.
 
     Args:
-        direction (str): 'up'/'increase'/'raise' or 'down'/'decrease'/'lower'
-                         or 'mute' or 'unmute'.
+        direction (str): 'up'/'increase' or 'down'/'decrease' or 'mute'/'unmute'.
 
     Returns:
         str: Confirmation of the action.
     """
-    import ctypes
-
     direction = direction.lower().strip()
 
-    # Method 1: pycaw (Most reliable, direct programmatic volume/mute control)
+    if _is_android():
+        if direction in ("mute", "silent", "silence"):
+            try:
+                subprocess.run(["termux-volume", "music", "0"], timeout=3)
+                return "Muted phone media."
+            except Exception:
+                return "Could not mute phone. Ensure termux-api is installed."
+        
+        try:
+            import json
+            vol_info = subprocess.run(["termux-volume"], capture_output=True, text=True, timeout=3)
+            streams = json.loads(vol_info.stdout)
+            curr_vol = 7
+            max_vol = 15
+            for s in streams:
+                if s.get("stream") == "music":
+                    curr_vol = s.get("volume", 7)
+                    max_vol = s.get("max_volume", 15)
+                    break
+        except Exception:
+            curr_vol = 7
+            max_vol = 15
+            
+        if direction in ("up", "increase", "raise", "louder", "volume up", "turn up"):
+            target = min(max_vol, curr_vol + 2)
+        elif direction in ("down", "decrease", "lower", "quieter", "volume down", "turn down"):
+            target = max(0, curr_vol - 2)
+        elif direction in ("unmute", "restore sound"):
+            target = max(3, curr_vol) # restore to at least 3
+        else:
+            return f"Unknown direction '{direction}'."
+            
+        try:
+            subprocess.run(["termux-volume", "music", str(target)], timeout=3)
+            return f"Phone music volume adjusted to {int(target * 100 / max_vol)}% (level {target}/{max_vol})."
+        except Exception:
+            return "Failed to adjust phone volume. Ensure termux-api is installed."
+
+    # Windows Implementation
+    import ctypes
     try:
         from comtypes import CLSCTX_ALL
         from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -154,7 +198,6 @@ def adjust_volume(direction: str) -> str:
             current_vol = volume_ctrl.GetMasterVolumeLevelScalar()
             new_vol = min(1.0, current_vol + 0.06)
             volume_ctrl.SetMasterVolumeLevelScalar(new_vol, None)
-            # Ensure system is unmuted when raising volume
             if volume_ctrl.GetMute():
                 volume_ctrl.SetMute(0, None)
             return f"Volume increased to {int(new_vol * 100)}%."
@@ -164,9 +207,8 @@ def adjust_volume(direction: str) -> str:
             volume_ctrl.SetMasterVolumeLevelScalar(new_vol, None)
             return f"Volume decreased to {int(new_vol * 100)}%."
     except Exception:
-        pass  # Fall back to SendInput
+        pass
 
-    # Method 2: ctypes SendInput (Simulated media key strokes fallback)
     VK_VOLUME_UP   = 0xAF
     VK_VOLUME_DOWN = 0xAE
     VK_VOLUME_MUTE = 0xAD
@@ -205,24 +247,18 @@ def adjust_volume(direction: str) -> str:
         for _ in range(3):
             press_vk(VK_VOLUME_UP)
         return "Volume increased."
-
     elif direction in ("down", "decrease", "lower", "quieter", "volume down", "turn down"):
         for _ in range(3):
             press_vk(VK_VOLUME_DOWN)
         return "Volume decreased."
-
     elif direction in ("mute", "silent", "silence"):
         press_vk(VK_VOLUME_MUTE)
         return "Muted."
-
     elif direction in ("unmute", "restore sound"):
         press_vk(VK_VOLUME_MUTE)
-        return "Unmuted (toggled mute)."
+        return "Unmuted."
 
-    return (
-        f"Unknown direction '{direction}'. "
-        "Use: up, down, mute, or unmute."
-    )
+    return f"Unknown direction '{direction}'."
 
 
 # ---------------------------------------------------------------------------
@@ -341,18 +377,12 @@ $y = ($screen.Height - $h) / 2
 
 def take_screenshot(mode: str = "full", save_dir: str = "") -> str:
     """
-    Takes a screenshot and saves it to the Desktop (or custom folder) with a timestamped filename.
-
-    Modes:
-      - 'full'    : captures the entire screen
-      - 'window'  : captures the active window (uses Alt+PrtSc)
-      - 'region'  : opens the Windows Snipping Tool for manual region selection
-
-    Requires Pillow for full/window modes: pip install Pillow
+    Takes a screenshot. On Windows, saves it to Desktop. On Android/Termux,
+    attempts to capture screenshot using screencap (requires root).
 
     Args:
         mode (str): Screenshot mode — 'full', 'window', or 'region'.
-        save_dir (str): Optional folder name (e.g. 'Downloads', 'Documents') or absolute path to save the file.
+        save_dir (str): Optional folder name or path.
 
     Returns:
         str: Path to the saved screenshot, or error message.
@@ -362,14 +392,29 @@ def take_screenshot(mode: str = "full", save_dir: str = "") -> str:
 
     mode = mode.lower().strip()
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    home = Path.home()
+    filename = f"screenshot_{timestamp}.png"
 
-    # Try OneDrive Desktop first
+    if _is_android():
+        # Try root screencap first
+        save_path = f"/sdcard/Pictures/{filename}"
+        res = subprocess.run(["su", "-c", f"/system/bin/screencap -p {save_path}"], capture_output=True)
+        if res.returncode == 0:
+            return f"Screenshot saved to phone gallery: {save_path} (requires root)"
+        
+        # Try local screencap
+        local_path = f"/data/data/com.termux/files/home/{filename}"
+        res2 = subprocess.run(["/system/bin/screencap", "-p", local_path], capture_output=True)
+        if res2.returncode == 0:
+            return f"Screenshot saved to Termux home: {local_path}"
+            
+        return "Taking screenshot on Android requires root permission. Try physical buttons (Volume Down + Power)."
+
+    # Windows Implementation
+    home = Path.home()
     desktop = home / "OneDrive" / "Desktop"
     if not desktop.is_dir():
         desktop = home / "Desktop"
 
-    # Resolve target directory
     target_dir = desktop
     if save_dir:
         from jarvis.tools.browser_tools import _resolve_folder
@@ -379,11 +424,9 @@ def take_screenshot(mode: str = "full", save_dir: str = "") -> str:
         elif os.path.isdir(save_dir):
             target_dir = Path(save_dir)
 
-    filename = f"screenshot_{timestamp}.png"
     save_path = target_dir / filename
 
     if mode == "region":
-        # Open Snipping Tool (built-in Windows)
         try:
             subprocess.Popen(["SnippingTool.exe"],
                              creationflags=subprocess.CREATE_NO_WINDOW)
@@ -395,7 +438,6 @@ def take_screenshot(mode: str = "full", save_dir: str = "") -> str:
                 return "Screen Clip opened. Select your region."
             except Exception:
                 pass
-        # Fallback: Win+Shift+S
         try:
             import pyautogui
             import time
@@ -411,9 +453,7 @@ def take_screenshot(mode: str = "full", save_dir: str = "") -> str:
             import time
 
             if mode == "window":
-                # Capture active window using Alt+PrtSc trick then grab clipboard
                 import ctypes
-                # Alt+PrtSc → copy to clipboard, then grab from clipboard
                 VK_SNAPSHOT = 0x2C
                 VK_MENU = 0x12
                 ctypes.windll.user32.keybd_event(VK_MENU, 0, 0, 0)
@@ -431,12 +471,10 @@ def take_screenshot(mode: str = "full", save_dir: str = "") -> str:
             return f"Screenshot saved to: {save_path}"
 
         except ImportError:
-            # PIL not available — use PowerShell fallback
             pass
         except Exception as e:
             pass
 
-        # PowerShell fallback (no Pillow needed)
         try:
             ps = f"""
 Add-Type -AssemblyName System.Windows.Forms
@@ -458,10 +496,7 @@ $bmp.Save('{str(save_path).replace(chr(92), chr(92)+chr(92))}')
         except Exception as e:
             return f"Screenshot error: {e}"
 
-    return (
-        f"Unknown screenshot mode '{mode}'. "
-        "Use: full, window, or region."
-    )
+    return f"Unknown screenshot mode '{mode}'."
 
 
 # ---------------------------------------------------------------------------
@@ -471,12 +506,8 @@ $bmp.Save('{str(save_path).replace(chr(92), chr(92)+chr(92))}')
 def clipboard_action(action: str, text: str = "") -> str:
     """
     Performs clipboard operations: read, write (copy), clear.
-
-    Supported actions:
-      - 'read'  / 'get'   : returns the current clipboard text
-      - 'copy'  / 'write' : copies the given text to the clipboard
-      - 'clear'           : empties the clipboard
-      - 'paste'           : sends Ctrl+V to paste (requires pyautogui)
+    On Windows, uses pyperclip or win32clipboard.
+    On Android, uses termux-clipboard-get/set.
 
     Args:
         action (str): The clipboard action to perform.
@@ -487,7 +518,32 @@ def clipboard_action(action: str, text: str = "") -> str:
     """
     action = action.lower().strip()
 
-    # Method 1: pyperclip (best cross-platform clipboard lib)
+    if _is_android():
+        if action in ("read", "get", "paste content", "show"):
+            try:
+                res = subprocess.run(["termux-clipboard-get"], capture_output=True, text=True, timeout=3)
+                content = res.stdout.strip()
+                return f"Clipboard contents:\n{content}" if content else "Clipboard is empty."
+            except Exception as e:
+                return "Failed to read phone clipboard. Ensure termux-api is installed."
+        elif action in ("copy", "write", "set"):
+            if not text:
+                return "No text provided to copy."
+            try:
+                subprocess.run(["termux-clipboard-set", text], timeout=3)
+                return f"Copied to phone clipboard: '{text[:80]}...'"
+            except Exception as e:
+                return "Failed to write to phone clipboard. Ensure termux-api is installed."
+        elif action in ("clear", "empty"):
+            try:
+                subprocess.run(["termux-clipboard-set", ""], timeout=3)
+                return "Clipboard cleared."
+            except Exception as e:
+                return "Failed to clear phone clipboard."
+        elif action in ("paste",):
+            return "Paste keyboard event is not supported on Android."
+
+    # Windows Implementation
     try:
         import pyperclip
 
@@ -508,9 +564,8 @@ def clipboard_action(action: str, text: str = "") -> str:
             return "Clipboard cleared."
 
     except ImportError:
-        pass  # pyperclip not installed, try win32
+        pass
 
-    # Method 2: Windows win32clipboard
     try:
         import win32clipboard
         import win32con
@@ -543,7 +598,6 @@ def clipboard_action(action: str, text: str = "") -> str:
     except ImportError:
         pass
 
-    # Method 3: PowerShell (always available)
     try:
         if action in ("read", "get", "show"):
             result = subprocess.run(
@@ -585,10 +639,7 @@ def clipboard_action(action: str, text: str = "") -> str:
         except ImportError:
             return "Paste requires pyautogui: pip install pyautogui"
 
-    return (
-        f"Unknown clipboard action '{action}'. "
-        "Use: read, copy, clear, or paste."
-    )
+    return f"Unknown clipboard action '{action}'."
 
 
 # ---------------------------------------------------------------------------

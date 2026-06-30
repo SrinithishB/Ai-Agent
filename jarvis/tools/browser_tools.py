@@ -173,33 +173,52 @@ _SEARCH_ENGINES: dict[str, str] = {
 # System folder registry
 # ---------------------------------------------------------------------------
 
+def _is_android() -> bool:
+    return os.path.exists("/system/bin/app_process") or "ANDROID_ROOT" in os.environ
+
+
 def _resolve_folder(folder_name: str) -> str | None:
     """Resolve a common folder name to its absolute path."""
     home = os.path.expanduser("~")
-    base_map = {
-        "downloads":  os.path.join(home, "Downloads"),
-        "documents":  os.path.join(home, "Documents"),
-        "desktop":    os.path.join(home, "Desktop"),
-        "pictures":   os.path.join(home, "Pictures"),
-        "videos":     os.path.join(home, "Videos"),
-        "music":      os.path.join(home, "Music"),
-        "onedrive":   os.path.join(home, "OneDrive"),
-        "appdata":    os.environ.get("APPDATA", ""),
-        "temp":       os.environ.get("TEMP", ""),
-        "system":     r"C:\Windows\System32",
-        "windows":    r"C:\Windows",
-        "program files": r"C:\Program Files",
-        "home":       home,
-    }
+    
+    if _is_android():
+        base_map = {
+            "downloads":  "/sdcard/Download",
+            "documents":  "/sdcard/Documents",
+            "desktop":    "/sdcard",
+            "pictures":   "/sdcard/Pictures",
+            "videos":     "/sdcard/DCIM",
+            "music":      "/sdcard/Music",
+            "home":       home,
+        }
+    else:
+        base_map = {
+            "downloads":  os.path.join(home, "Downloads"),
+            "documents":  os.path.join(home, "Documents"),
+            "desktop":    os.path.join(home, "Desktop"),
+            "pictures":   os.path.join(home, "Pictures"),
+            "videos":     os.path.join(home, "Videos"),
+            "music":      os.path.join(home, "Music"),
+            "onedrive":   os.path.join(home, "OneDrive"),
+            "appdata":    os.environ.get("APPDATA", ""),
+            "temp":       os.environ.get("TEMP", ""),
+            "system":     r"C:\Windows\System32",
+            "windows":    r"C:\Windows",
+            "program files": r"C:\Program Files",
+            "home":       home,
+        }
+    
     key = folder_name.strip().lower()
     # Direct match
     if key in base_map:
         return base_map[key]
-    # Check OneDrive variants
-    for folder in ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"]:
-        od_path = os.path.join(home, "OneDrive", folder)
-        if key == folder.lower() and os.path.isdir(od_path):
-            return od_path
+    
+    if not _is_android():
+        # Check OneDrive variants
+        for folder in ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"]:
+            od_path = os.path.join(home, "OneDrive", folder)
+            if key == folder.lower() and os.path.isdir(od_path):
+                return od_path
     return None
 
 
@@ -421,6 +440,13 @@ def open_folder(folder_name: str) -> str:
                     f"Could not find folder '{folder_name}'. "
                     "Try: Downloads, Documents, Desktop, Pictures, Videos, Music."
                 )
+
+    if _is_android():
+        try:
+            subprocess.run(["termux-open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return f"Opened '{folder_name}' in Android File Manager."
+        except Exception as e:
+            return f"Error opening folder: {e}"
 
     try:
         subprocess.Popen(["explorer", path],
