@@ -111,7 +111,7 @@ def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> tupl
     last_status = 200
     for attempt_idx, model in enumerate(model_list):
         try:
-            mime = "audio/amr" if filepath.endswith(".amr") else "audio/m4a"
+            mime = "audio/m4a"
             with open(filepath, "rb") as f:
                 files = {
                     "file": (os.path.basename(filepath), f, mime)
@@ -151,7 +151,7 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
     import os
     import sys
     
-    wake_wav = str(BASE_DIR / "wake_temp.amr")
+    wake_wav = str(BASE_DIR / "wake_temp.m4a")
     cmd_wav = str(BASE_DIR / "cmd_temp.m4a")
     
     whisper_models = ["whisper-large-v3-turbo", "whisper-large-v3"]
@@ -167,26 +167,20 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
     
     print("[*] Listening for 'Jarvis' (hands-free)...")
     
-    current_sleep_delay = 1.5
+    current_sleep_delay = 2.0
     
     while True:
         try:
-            # Record a short 3-second audio clip using amr_nb for silence checking
+            # Record a short 3-second audio clip using aac
             res = subprocess.run(
-                ["termux-microphone-record", "-e", "amr_nb", "-f", wake_wav, "-l", "3"],
+                ["termux-microphone-record", "-e", "aac", "-f", wake_wav, "-l", "3"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10
             )
             
-            if not os.path.exists(wake_wav):
+            if not os.path.exists(wake_wav) or os.path.getsize(wake_wav) == 0:
                 time.sleep(0.5)
-                continue
-                
-            file_size = os.path.getsize(wake_wav)
-            if file_size < 1850:
-                # Silent room — skip Whisper API query to save rate limits
-                time.sleep(current_sleep_delay)
                 continue
                 
             # Transcribe the 3-second clip
