@@ -47,7 +47,7 @@ if _env_file.is_file():
 if not _groq_key:
     _groq_key = os.environ.get("GROQ_API_KEY")
 
-MODEL = "groq/compound" if _groq_key else "qwen2.5-coder:1.5b"
+MODEL = "llama-3.3-70b-versatile" if _groq_key else "qwen2.5-coder:1.5b"
 CLIENT_DIR = Path(__file__).parent / "client"
 
 # ---------------------------------------------------------------------------

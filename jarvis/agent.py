@@ -98,6 +98,8 @@ def _groq_chat_completion_stream(model: str, messages: list, tools: list, api_ke
         stream=True,
         timeout=180
     )
+    if res.status_code != 200:
+        raise Exception(f"{res.status_code} Client/Server Error: {res.text}")
     res.raise_for_status()
     
     class MockFunction:
@@ -274,8 +276,8 @@ def run(
             if is_groq:
                 # Use selected model name, or default if generic
                 groq_model_name = model_name
-                if not any(gp in model_name.lower() for gp in ("llama", "groq", "allam", "qwen3", "gpt-oss")):
-                    groq_model_name = "groq/compound"
+                if "groq/compound" in groq_model_name.lower() or not any(gp in model_name.lower() for gp in ("llama", "groq", "allam", "qwen3", "gpt-oss")):
+                    groq_model_name = "llama-3.3-70b-versatile"
 
                 # Map system message + history to OpenAI format and sanitize IDs/types
                 openai_messages = []
