@@ -96,8 +96,11 @@ def record_audio_termux(filepath: str) -> bool:
         return False
 
 
-def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> str:
-    """Send audio file to Groq Whisper API, trying models in model_list sequentially on failure/rate-limit."""
+def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> tuple[str, int]:
+    """
+    Send audio file to Groq Whisper API, trying models in model_list sequentially on failure/rate-limit.
+    Returns a tuple of (transcribed_text, status_code).
+    """
     import requests
     import os
     
@@ -105,11 +108,13 @@ def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> str:
         "Authorization": f"Bearer {api_key}"
     }
     
+    last_status = 200
     for attempt_idx, model in enumerate(model_list):
         try:
+            mime = "audio/amr" if filepath.endswith(".amr") else "audio/m4a"
             with open(filepath, "rb") as f:
                 files = {
-                    "file": (os.path.basename(filepath), f, "audio/m4a")
+                    "file": (os.path.basename(filepath), f, mime)
                 }
                 data = {
                     "model": model,
@@ -122,22 +127,23 @@ def transcribe_audio_groq(filepath: str, api_key: str, model_list: list) -> str:
                     data=data,
                     timeout=30
                 )
+            last_status = res.status_code
             if res.status_code == 200:
-                # Success! Move the successful model to the front of the list so it is used first next time
+                # Success! Move the successful model to the front of the list
                 if attempt_idx > 0:
                     model_list.insert(0, model_list.pop(attempt_idx))
-                return res.json().get("text", "").strip()
+                return res.json().get("text", "").strip(), 200
             
-            # If rate limit (429) or other API errors
             print(f"[!] Groq Whisper ({model}) error {res.status_code}: {res.text}")
             if res.status_code == 429:
                 print(f"[!] Rate limit hit on '{model}'. Trying fallback model...")
                 continue
         except Exception as e:
             print(f"[!] Groq Whisper ({model}) exception: {e}")
+            last_status = 500
             continue
 
-    return ""
+    return "", last_status
 
 
 def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: str):
@@ -145,7 +151,7 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
     import os
     import sys
     
-    wake_wav = str(BASE_DIR / "wake_temp.m4a")
+    wake_wav = str(BASE_DIR / "wake_temp.amr")
     cmd_wav = str(BASE_DIR / "cmd_temp.m4a")
     
     whisper_models = ["whisper-large-v3-turbo", "whisper-large-v3"]
@@ -161,29 +167,45 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
     
     print("[*] Listening for 'Jarvis' (hands-free)...")
     
+    current_sleep_delay = 1.5
+    
     while True:
         try:
-            # Record a short 3-second audio clip
+            # Record a short 3-second audio clip using amr_nb for silence checking
             res = subprocess.run(
-                ["termux-microphone-record", "-e", "aac", "-f", wake_wav, "-l", "3"],
+                ["termux-microphone-record", "-e", "amr_nb", "-f", wake_wav, "-l", "3"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10
             )
             
-            if not os.path.exists(wake_wav) or os.path.getsize(wake_wav) == 0:
+            if not os.path.exists(wake_wav):
                 time.sleep(0.5)
                 continue
                 
+            file_size = os.path.getsize(wake_wav)
+            if file_size < 1850:
+                # Silent room — skip Whisper API query to save rate limits
+                time.sleep(current_sleep_delay)
+                continue
+                
             # Transcribe the 3-second clip
-            text = transcribe_audio_groq(wake_wav, groq_key, whisper_models).lower().strip()
+            text, status = transcribe_audio_groq(wake_wav, groq_key, whisper_models)
+            text = text.lower().strip()
             
+            if status == 429:
+                print(f"[!] Rate limit (429) reached. Backing off for 15 seconds to save API quota...")
+                time.sleep(15.0)
+                continue
+                
             if not text:
+                time.sleep(current_sleep_delay)
                 continue
                 
             # Find if wake word was spoken
             triggered = next((w for w in WAKE_WORDS if w in text), None)
             if not triggered:
+                time.sleep(current_sleep_delay)
                 continue
                 
             # Wake word triggered!
@@ -205,7 +227,14 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
                 continue
                 
             print("[*] Transcribing command...")
-            command = transcribe_audio_groq(cmd_wav, groq_key, whisper_models)
+            command, status_cmd = transcribe_audio_groq(cmd_wav, groq_key, whisper_models)
+            
+            if status_cmd == 429:
+                print("[!] Rate limit reached during command transcription.")
+                speak(tts, "Sorry, I hit a rate limit. Please try again in a few seconds.")
+                time.sleep(10)
+                continue
+                
             if not command:
                 speak(tts, "Sorry, I couldn't transcribe that.")
                 print("[!] Command transcription failed.")
@@ -220,6 +249,7 @@ def termux_handsfree_wake_loop(server_url: str, chat_url: str, tts, groq_key: st
             speak(tts, reply)
             
             print("\n[*] Listening for 'Jarvis' (hands-free)...")
+            time.sleep(0.5)
             
         except KeyboardInterrupt:
             print("\n[*] Shutting down hands-free listener.")
